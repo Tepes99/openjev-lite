@@ -1,16 +1,17 @@
-"""Decider protocol: local traditional-ML baselines plus the LLM readout.
+"""Decider protocol: local traditional-ML baselines plus the laya decision model.
 
-One protocol: score(row, endpoint) -> result dict with option_ids,
-probabilities over the declared options, timing, and a method tag.
+One protocol: score(row) -> result dict with option_ids, probabilities over
+the declared options, timing, and a method tag.
 
-  llm            openjev-lite direct readout via the served model
   tfidf-cosine   cosine similarity, evidence+question vs each option description
   naive-bayes    MultinomialNB trained on the option descriptions as classes
   jaccard        keyword-overlap (Jaccard) baseline
+  knn            KNeighborsClassifier (cosine, distance-weighted) on options
+  laya           fully fine-tuned non-autoregressive decision model (base method)
 
 The local systems need no training data: the runtime options themselves are
-the only classes / neighbors available. Their probabilities are
-uncalibrated similarity scores (documented in `notes`), like the LLM readout.
+the only classes / neighbors available. Their probabilities are uncalibrated
+similarity scores (documented in `notes`); laya is the calibrated base.
 """
 
 from __future__ import annotations
@@ -19,9 +20,7 @@ import json
 import math
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 
-import openjev_lite
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.naive_bayes import MultinomialNB
@@ -59,49 +58,7 @@ def _result(row: dict, option_ids: list[str], probabilities: list[float], starte
     }
 
 
-def score_llm(row: dict, endpoint: dict) -> dict:
-    result = openjev_lite.score_row(row, endpoint)
-    result["method"] = "llm-direct-logprobs"
-    return result
-
-
-PER_OPTION_SYSTEM = (
-    "Decide whether the supplied option is the correct answer for the criterion. "
-    "Respond with exactly 'yes' or 'no'."
-)
-
-
-def _first_token_logprob(endpoint: dict, messages: list[dict]) -> float:
-    response = openjev_lite.request_completion(endpoint, messages)
-    first = response["choices"][0]["logprobs"]["content"][0]
-    logprobs = {entry["token"].lower(): entry["logprob"] for entry in first.get("top_logprobs") or []}
-    return logprobs.get("yes", float("-inf"))
-
-
-def score_llm_per_option(row: dict, endpoint: dict) -> dict:
-    started = time.perf_counter()
-    def one(option: dict) -> float:
-        messages = [
-            {"role": "system", "content": PER_OPTION_SYSTEM},
-            {"role": "user", "content": (
-                f"evidence: {state_to_text(row['state'])}\n"
-                f"criterion: {row['question']}\n"
-                f"option: {option['description']}"
-            )},
-        ]
-        return math.exp(min(_first_token_logprob(endpoint, messages), 0.0))
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        raw = list(pool.map(one, row["options"]))
-    total = sum(raw)
-    probs = [p / total for p in raw] if total > 0 else [1.0 / len(raw)] * len(raw)
-    return _result(
-        row, [option["id"] for option in row["options"]], probs, started,
-        "llm-per-option-v1",
-        "pointwise 'is option X correct?' yes/no first-token logprob, normalized over options",
-    )
-
-
-def score_tfidf_cosine(row: dict, endpoint: dict | None = None) -> dict:
+def score_tfidf_cosine(row: dict) -> dict:
     started = time.perf_counter()
     query = state_to_text(row["state"]) + " " + row["question"]
     docs = [option["description"] for option in row["options"]]
@@ -118,7 +75,7 @@ def score_tfidf_cosine(row: dict, endpoint: dict | None = None) -> dict:
     )
 
 
-def score_naive_bayes(row: dict, endpoint: dict | None = None) -> dict:
+def score_naive_bayes(row: dict) -> dict:
     started = time.perf_counter()
     query = state_to_text(row["state"]) + " " + row["question"]
     docs = [option["description"] for option in row["options"]]
@@ -137,7 +94,7 @@ def score_naive_bayes(row: dict, endpoint: dict | None = None) -> dict:
     )
 
 
-def score_jaccard(row: dict, endpoint: dict | None = None) -> dict:
+def score_jaccard(row: dict) -> dict:
     started = time.perf_counter()
     query = set(_tokens(state_to_text(row["state"]) + " " + row["question"]))
     sims = []
@@ -152,7 +109,7 @@ def score_jaccard(row: dict, endpoint: dict | None = None) -> dict:
     )
 
 
-def score_knn(row: dict, endpoint: dict | None = None) -> dict:
+def score_knn(row: dict) -> dict:
     started = time.perf_counter()
     query = state_to_text(row["state"]) + " " + row["question"]
     docs = [option["description"] for option in row["options"]]
@@ -179,25 +136,38 @@ def score_knn(row: dict, endpoint: dict | None = None) -> dict:
     )
 
 
-# --- laya: a small fully fine-tuned non-autoregressive decision model (local) ---
+# --- laya: a small fully fine-tuned non-autoregressive decision model (base) ---
 import threading
 from pathlib import Path
 
 _laya_agent = None
 _laya_load_error = None
 _laya_lock = threading.Lock()
-# Self-contained local copy of the weights (git-ignored) so the one-time HF
-# download is never repeated. Falls back to the HF repo id if the folder is
-# absent (e.g. a fresh checkout that has not been populated yet).
+# In the deployed container the weights live on the persistent /data volume, so
+# they are downloaded once (first boot) and reused across restarts. Locally,
+# prefer the git-ignored models/laya copy, else fall back to the HF repo id.
+_LAYA_DATA = Path("/data/laya")
 _LAYA_LOCAL = Path(__file__).parent / "models" / "laya"
-_LAYA_SOURCE = _LAYA_LOCAL if _LAYA_LOCAL.exists() else "convaiinnovations/laya"
+
+
+def _laya_source() -> str:
+    if _LAYA_DATA.parent.exists():
+        # /data is mounted (deployed container): fetch into the volume once.
+        if not _LAYA_DATA.exists():
+            from huggingface_hub import snapshot_download
+
+            snapshot_download("convaiinnovations/laya", local_dir=str(_LAYA_DATA))
+        return str(_LAYA_DATA)
+    if _LAYA_LOCAL.exists():
+        return str(_LAYA_LOCAL)
+    return "convaiinnovations/laya"
 
 
 def _get_laya():
     """Thread-safe lazy singleton for the laya agent.
 
-    Loading is the one-time cost (a fresh MPS init is minutes, and a missing
-    local copy triggers an HF download), so we load once and reuse.
+    Loading is the one-time cost (a fresh MPS/CPU init is slow, and a missing
+    local copy triggers a one-time download), so we load once and reuse.
     prewarm_laya() is fired in a background thread at server startup so the
     first real request does not pay the load on the request thread; if a
     request arrives before the prewarm finishes, it simply waits on the lock
@@ -210,7 +180,7 @@ def _get_laya():
                 try:
                     import laya
 
-                    _laya_agent = laya.load(_LAYA_SOURCE)
+                    _laya_agent = laya.load(_laya_source())
                 except Exception as error:  # noqa: BLE001 - reported in the system's column
                     _laya_load_error = f"{type(error).__name__}: {error}"
     if _laya_load_error:
@@ -223,7 +193,7 @@ def prewarm_laya() -> None:
     _get_laya()
 
 
-def score_laya(row: dict, endpoint: dict | None = None) -> dict:
+def score_laya(row: dict) -> dict:
     """Run one row as a single 'choice' question through the laya model.
 
     mapping: row.state -> laya state, row.question -> instructions,
@@ -258,8 +228,6 @@ def score_laya(row: dict, endpoint: dict | None = None) -> dict:
 
 
 DECIDERS = [
-    ("llm", score_llm),
-    ("llm-per-option", score_llm_per_option),
     ("tfidf-cosine", score_tfidf_cosine),
     ("naive-bayes", score_naive_bayes),
     ("jaccard", score_jaccard),
@@ -268,12 +236,12 @@ DECIDERS = [
 ]
 
 
-def score_all(row: dict, endpoint: dict) -> dict:
+def score_all(row: dict) -> dict:
     """Run every decider on one row; a failing system reports its own error."""
     results = {}
     for name, fn in DECIDERS:
         try:
-            results[name] = fn(row, endpoint)
+            results[name] = fn(row)
         except Exception as error:
             results[name] = {"id": row["id"], "method": name, "error": str(error)}
     return results

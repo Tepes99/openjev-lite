@@ -1,0 +1,17 @@
+version = 1
+name = "decision-systems"
+domain = "decision-systems.apps.teemusaha.com"
+
+[service]
+container_port = 8000
+healthcheck = "/health"
+# The laya model holds ~1.7 GB of fp32 weights in process; give it room.
+memory = "3g"
+cpus = 2
+
+[data]
+enabled = true
+container_path = "/data"
+
+[environment]
+file = ".env.production"

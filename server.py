@@ -1,13 +1,14 @@
 """FastAPI server for testing the decision systems in the browser.
 
-Serves the static page and four endpoints:
+Serves the static page and endpoints:
   GET  /            — the tester page
-  GET  /api/info    — served model name + endpoint (for the header)
+  GET  /health      — liveness probe (used by the ship health check)
+  GET  /api/info    — served model name (the laya base method)
   GET  /api/examples — the openjev example scenarios (decisions.jsonl)
   GET  /api/laya   — local laya model status (loading / ready / error)
-  POST /api/score   — one row -> all seven deciders scored together
+  POST /api/score   — one row -> every decider scored together
 
-The laya model is a multi-minute one-time load, so it is pre-warmed in a
+The laya model is a one-time, somewhat slow load, so it is pre-warmed in a
 background thread at startup; the server is ready to serve (and the page
 loads) well before laya finishes.
 
@@ -43,10 +44,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="decision systems tester", lifespan=lifespan)
 
 
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
 @app.get("/api/info")
 def info() -> dict:
-    ep = openjev_lite.load_endpoint()
-    return {"model": ep["model"], "base_url": ep["base_url"]}
+    return {"model": "laya · convaiinnovations/laya"}
 
 
 @app.get("/api/examples")
@@ -76,8 +81,7 @@ async def score(request: Request) -> dict:
         openjev_lite.validate_row(row)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    endpoint = openjev_lite.load_endpoint()
-    return {"results": ml_systems.score_all(row, endpoint)}
+    return {"results": ml_systems.score_all(row)}
 
 
 @app.get("/")
@@ -88,4 +92,4 @@ def index() -> FileResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8377)
+    uvicorn.run(app, host="0.0.0.0", port=8377)
