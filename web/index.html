@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openjev-lite tester</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+    --dim: #8b949e; --accent: #2f81f7; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "SF Pro Text", Menlo, monospace;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 16px; margin: 0; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  main { display: grid; grid-template-columns: 240px 1fr 1fr; gap: 0; height: calc(100vh - 53px); }
+  .col { overflow-y: auto; padding: 16px; }
+  .col + .col { border-left: 1px solid var(--border); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 0 0 10px; }
+  .scenario {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    background: none; border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font: inherit;
+  }
+  .scenario:hover { border-color: var(--accent); }
+  .scenario.active { border-color: var(--accent); background: rgba(47,129,247,.12); }
+  .scenario .id { font-weight: 600; }
+  .scenario .q { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  button.action {
+    background: var(--accent); border: none; color: #fff; border-radius: 6px;
+    padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button.action.secondary { background: none; border: 1px solid var(--border); color: var(--text); font-weight: 400; }
+  button.action.secondary:hover { border-color: var(--accent); }
+  button.tiny { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 13px; padding: 2px 6px; }
+  button.tiny:hover { color: var(--bad); }
+  label { display: block; color: var(--dim); font-size: 12px; margin: 12px 0 4px; }
+  input, textarea, select {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 7px 9px; font: inherit;
+  }
+  textarea { resize: vertical; min-height: 84px; }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  .opt-row { display: grid; grid-template-columns: 38px 110px 1fr 30px; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .opt-row .letter { color: var(--accent); font-weight: 700; text-align: center; }
+  .opt-row .del { text-align: right; }
+  .toolbar { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .bars { margin-top: 14px; }
+  .bar-row { display: grid; grid-template-columns: 150px 1fr 130px; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .bar-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-track { background: #21262d; border-radius: 4px; height: 22px; position: relative; }
+  .bar-fill { background: var(--dim); height: 100%; border-radius: 4px; min-width: 2px; }
+  .bar-row.win .bar-fill { background: var(--accent); }
+  .bar-row .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); font-size: 12px; }
+  .bar-row.win .val { color: var(--text); font-weight: 700; }
+  .meta { display: flex; gap: 18px; margin-top: 12px; color: var(--dim); font-size: 12px; flex-wrap: wrap; }
+  .meta b { color: var(--text); font-weight: 600; }
+  .argmax-badge { display: inline-block; background: rgba(63,185,80,.15); color: var(--ok); border: 1px solid var(--ok); border-radius: 10px; padding: 1px 10px; font-size: 12px; font-weight: 700; margin-top: 10px; }
+  .err { color: var(--bad); margin-top: 10px; white-space: pre-wrap; }
+  pre.raw { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; color: var(--dim); margin-top: 12px; }
+  .hint { color: var(--dim); font-size: 12px; }
+  .badge { font-size: 11px; color: var(--dim); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; margin-left: 6px; }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--dim); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .batch-row { display: grid; grid-template-columns: 140px 1fr 70px 70px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .batch-row .b { font-weight: 700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>openjev-lite tester</h1>
+  <span class="sub">direct-mode option readout · top-20 logprobs · <span id="model">…</span></span>
+</header>
+<main>
+  <div class="col">
+    <h2>Scenarios</h2>
+    <div id="scenarioList"></div>
+    <button class="action secondary" id="addScenario">+ New scenario</button>
+  </div>
+  <div class="col">
+    <h2>Scenario editor</h2>
+    <label>id</label>
+    <input id="editId" placeholder="my-decision">
+    <label>state (evidence — text, JSON object, or array)</label>
+    <textarea id="editState" placeholder="The deployment completed at 14:02 UTC. …"></textarea>
+    <label>question (criterion)</label>
+    <input id="editQuestion" placeholder="Which option is correct?">
+    <label>options (2–16)</label>
+    <div id="editOptions"></div>
+    <button class="action secondary" id="addOption">+ Add option</button>
+    <div class="toolbar">
+      <button class="action" id="scoreOne">Score this</button>
+      <button class="action secondary" id="scoreAll">Score all scenarios</button>
+    </div>
+    <p class="hint" style="margin-top:14px">Probabilities are conditional on the supplied options and uncalibrated as confidence.</p>
+  </div>
+  <div class="col">
+    <h2>Result</h2>
+    <div id="result"></div>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let scenarios = [];
+let current = 0;
+let nextId = 1;
+
+function freshRow() {
+  return {
+    id: "scenario-" + nextId++,
+    state: "",
+    question: "",
+    options: [
+      { id: "opt_a", description: "" },
+      { id: "opt_b", description: "" },
+    ],
+  };
+}
+
+function loadRow(row) {
+  $("editId").value = row.id;
+  $("editState").value = typeof row.state === "string" ? row.state : JSON.stringify(row.state, null, 2);
+  $("editQuestion").value = row.question;
+  renderOptions(row.options);
+}
+
+function renderOptions(options) {
+  const wrap = $("editOptions");
+  wrap.innerHTML = "";
+  const letters = "ABCDEFGHIJKLMNOP";
+  options.forEach((opt, i) => {
+    const row = document.createElement("div");
+    row.className = "opt-row";
+    row.innerHTML = `
+      <span class="letter">${letters[i]}</span>
+      <input class="opt-id" placeholder="id" value="">
+      <input class="opt-desc" placeholder="description" value="">
+      <span class="del"><button class="tiny" title="remove">✕</button></span>`;
+    row.querySelector(".opt-id").value = opt.id;
+    row.querySelector(".opt-desc").value = opt.description;
+    row.querySelector(".opt-id").addEventListener("input", (e) => { options[i].id = e.target.value; });
+    row.querySelector(".opt-desc").addEventListener("input", (e) => { options[i].description = e.target.value; });
+    row.querySelector(".tiny").addEventListener("click", () => {
+      if (options.length <= 2) return;
+      options.splice(i, 1);
+      renderOptions(options);
+    });
+    wrap.appendChild(row);
+  });
+}
+
+function readEditor() {
+  let state = $("editState").value;
+  try {
+    if (state.trim().startsWith("{") || state.trim().startsWith("[")) state = JSON.parse(state);
+  } catch { /* plain text */ }
+  const options = [];
+  $("editOptions").querySelectorAll(".opt-row").forEach((row) => {
+    options.push({ id: row.querySelector(".opt-id").value, description: row.querySelector(".opt-desc").value });
+  });
+  return { id: $("editId").value, state, question: $("editQuestion").value, options };
+}
+
+function renderScenarioList() {
+  const wrap = $("scenarioList");
+  wrap.innerHTML = "";
+  scenarios.forEach((row, i) => {
+    const btn = document.createElement("button");
+    btn.className = "scenario" + (i === current ? " active" : "");
+    btn.innerHTML = `<div class="id"></div><div class="q"></div>`;
+    btn.querySelector(".id").textContent = row.id;
+    btn.querySelector(".q").textContent = row.question;
+    btn.addEventListener("click", () => { current = i; loadRow(row); renderScenarioList(); });
+    wrap.appendChild(btn);
+  });
+}
+
+function barHTML(optionIds, probabilities) {
+  const max = Math.max(...probabilities, 0);
+  const win = probabilities.indexOf(max);
+  return optionIds.map((id, i) => `
+    <div class="bar-row ${i === win ? "win" : ""}">
+      <span class="name" title="${id}">${id}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${Math.max(probabilities[i] / max * 100, 2)}%"></span></span>
+      <span class="val">${(probabilities[i] * 100).toFixed(2)}%${probabilities[i] === 0 ? " (≤top-20)" : ""}</span>
+    </div>`).join("");
+}
+
+function renderResult(result) {
+  const el = $("result");
+  if (!result) { el.innerHTML = '<span class="hint">Score a scenario to see option probabilities.</span>'; return; }
+  el.innerHTML = `
+    <div class="argmax-badge">argmax: ${result.option_ids[result.probabilities.indexOf(Math.max(...result.probabilities))]}</div>
+    <div class="bars">${barHTML(result.option_ids, result.probabilities)}</div>
+    <div class="meta">
+      <span>time <b>${result.total_seconds.toFixed(3)} s</b></span>
+      <span>input tokens <b>${result.input_tokens ?? "—"}</b></span>
+      <span>prompt <b>${result.prompt_sha256.slice(0, 12)}…</b></span>
+    </div>
+    <button class="action secondary" style="margin-top:12px" id="toggleRaw">raw JSON</button>
+    <pre class="raw" id="rawJson" style="display:none"></pre>`;
+  $("toggleRaw").addEventListener("click", () => {
+    const pre = $("rawJson");
+    pre.style.display = pre.style.display === "none" ? "block" : "none";
+    pre.textContent = JSON.stringify(result, null, 2);
+  });
+}
+
+async function score(row) {
+  const resp = await fetch("/api/score", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(row) });
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(body.detail || resp.statusText);
+  return body.results[0];
+}
+
+async function scoreOne() {
+  const row = readEditor();
+  const el = $("result");
+  el.innerHTML = '<span class="spinner"></span>scoring…';
+  try {
+    const result = await score(row);
+    renderResult(result);
+  } catch (e) {
+    el.innerHTML = `<div class="err">${e.message}</div>`;
+  }
+}
+
+async function scoreAll() {
+  const el = $("result");
+  const html = [];
+  for (const row of scenarios) {
+    html.push(`<div class="batch-row"><span class="spinner" id="spin-${row.id}"></span><span class="b">${row.id}</span><span class="hint">scoring…</span><span></span><span></span></div>`);
+  }
+  el.innerHTML = html.join("");
+  for (let i = 0; i < scenarios.length; i++) {
+    const row = scenarios[i];
+    const line = el.children[i];
+    try {
+      const r = await score(row);
+      const win = r.probabilities.indexOf(Math.max(...r.probabilities));
+      line.innerHTML = `
+        <span class="b">${r.id}</span>
+        <span class="b" style="color:var(--ok)">${r.option_ids[win]}</span>
+        <span>${(r.probabilities[win] * 100).toFixed(1)}%</span>
+        <span class="hint">${r.total_seconds.toFixed(3)} s</span>`;
+    } catch (e) {
+      line.innerHTML = `<span class="b">${row.id}</span><span class="err">${e.message}</span>`;
+    }
+  }
+}
+
+function syncFromEditor() {
+  const row = readEditor();
+  scenarios[current] = row;
+  renderScenarioList();
+}
+
+$("editId").addEventListener("input", syncFromEditor);
+$("editQuestion").addEventListener("input", syncFromEditor);
+$("addOption").addEventListener("click", () => {
+  const row = readEditor();
+  if (row.options.length >= 16) return;
+  row.options.push({ id: "opt_" + String.fromCharCode(97 + row.options.length % 26), description: "" });
+  scenarios[current] = row;
+  renderOptions(row.options);
+  renderScenarioList();
+});
+$("addScenario").addEventListener("click", () => {
+  scenarios.push(freshRow());
+  current = scenarios.length - 1;
+  loadRow(scenarios[current]);
+  renderScenarioList();
+});
+$("scoreOne").addEventListener("click", scoreOne);
+$("scoreAll").addEventListener("click", scoreAll);
+
+(async () => {
+  try {
+    const resp = await fetch("/api/examples");
+    scenarios = await resp.json();
+    current = 0;
+  } catch {
+    scenarios = [freshRow()];
+  }
+  loadRow(scenarios[0]);
+  renderScenarioList();
+  renderResult(null);
+  fetch("/api/info").then(r => r.json()).then(d => { $("model").textContent = d.model; }).catch(() => {});
+})();
+</script>
+</body>
+</html>
