@@ -178,6 +178,85 @@ def score_knn(row: dict, endpoint: dict | None = None) -> dict:
         "KNeighborsClassifier (cosine, distance-weighted, k=min(3,n)) on option descriptions; predict_proba on evidence+question",
     )
 
+
+# --- laya: a small fully fine-tuned non-autoregressive decision model (local) ---
+import threading
+from pathlib import Path
+
+_laya_agent = None
+_laya_load_error = None
+_laya_lock = threading.Lock()
+# Self-contained local copy of the weights (git-ignored) so the one-time HF
+# download is never repeated. Falls back to the HF repo id if the folder is
+# absent (e.g. a fresh checkout that has not been populated yet).
+_LAYA_LOCAL = Path(__file__).parent / "models" / "laya"
+_LAYA_SOURCE = _LAYA_LOCAL if _LAYA_LOCAL.exists() else "convaiinnovations/laya"
+
+
+def _get_laya():
+    """Thread-safe lazy singleton for the laya agent.
+
+    Loading is the one-time cost (a fresh MPS init is minutes, and a missing
+    local copy triggers an HF download), so we load once and reuse.
+    prewarm_laya() is fired in a background thread at server startup so the
+    first real request does not pay the load on the request thread; if a
+    request arrives before the prewarm finishes, it simply waits on the lock
+    and gets the already-loaded agent (no double load).
+    """
+    global _laya_agent, _laya_load_error
+    if _laya_agent is None and _laya_load_error is None:
+        with _laya_lock:
+            if _laya_agent is None and _laya_load_error is None:
+                try:
+                    import laya
+
+                    _laya_agent = laya.load(_LAYA_SOURCE)
+                except Exception as error:  # noqa: BLE001 - reported in the system's column
+                    _laya_load_error = f"{type(error).__name__}: {error}"
+    if _laya_load_error:
+        raise RuntimeError(_laya_load_error)
+    return _laya_agent
+
+
+def prewarm_laya() -> None:
+    """Kick off the one-time laya load; safe to call from a background thread."""
+    _get_laya()
+
+
+def score_laya(row: dict, endpoint: dict | None = None) -> dict:
+    """Run one row as a single 'choice' question through the laya model.
+
+    mapping: row.state -> laya state, row.question -> instructions,
+    row.options -> criteria {option id: description}. laya scores every option
+    at its own [MASK] marker in one forward pass and returns a temperature-
+    calibrated softmax over the options (plus a calibrated confidence).
+    """
+    started = time.perf_counter()
+    agent = _get_laya()
+    # keep state as-is (str/dict/list are all valid laya states)
+    questions = {
+        "decision": {
+            "type": "choice",
+            "instructions": row["question"],
+            "criteria": {option["id"]: option["description"] for option in row["options"]},
+        }
+    }
+    answer = agent.predict(row["state"], questions)["answers"]["decision"]
+    option_ids = [option["id"] for option in row["options"]]
+    probabilities = [float(answer["probabilities"][oid]) for oid in option_ids]
+    total = sum(probabilities)
+    probabilities = [p / total for p in probabilities] if total > 0 else [1.0 / len(probabilities)] * len(probabilities)
+    result = _result(
+        row, option_ids, probabilities, started,
+        "laya-v1",
+        "laya non-autoregressive decision model (ModernBERT-large + decision head), "
+        "one choice question, marker-scored softmax over options, temperature-calibrated",
+    )
+    # laya's headline extra: a calibrated confidence the others do not have
+    result["confidence"] = answer.get("confidence")
+    return result
+
+
 DECIDERS = [
     ("llm", score_llm),
     ("llm-per-option", score_llm_per_option),
@@ -185,6 +264,7 @@ DECIDERS = [
     ("naive-bayes", score_naive_bayes),
     ("jaccard", score_jaccard),
     ("knn", score_knn),
+    ("laya", score_laya),
 ]
 
 

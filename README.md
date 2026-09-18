@@ -1,10 +1,12 @@
 # low-level-decision-systems
 
 Small decision harness: one runtime-defined question + unstructured evidence + a
-list of options is scored by **six deciders at once**, and the results are
-reported together for comparison. One of them is an LLM readout that imitates
-[openjev](https://github.com/TheoLeeCJ/openjev) in minimal form over a served
-endpoint; the others are local, no-training-data traditional-ML baselines.
+list of options is scored by **seven deciders at once**, and the results are
+reported together for comparison. Two of them are LLM readouts, one of which
+imitates [openjev](https://github.com/TheoLeeCJ/openjev) in minimal form over
+a served endpoint; four are local, no-training-data traditional-ML baselines;
+and one is a small fully fine-tuned non-autoregressive decision model
+([`laya`](https://huggingface.co/convaiinnovations/laya), local).
 
 ```mermaid
 flowchart LR
@@ -12,10 +14,13 @@ flowchart LR
     C[criterion / question] --> M
     O[declared options] --> M
     M -- "first-token logprobs (top-20)" --> P[option probabilities]
-    S --> L[local deciders:<br/>tfidf-cosine · naive-bayes · jaccard · knn]
+    S --> L[local baselines:<br/>tfidf-cosine · naive-bayes · jaccard · knn]
     L --> P
+    S --> Y[laya decision model<br/>ModernBERT-large + decision head]
+    C --> Y
+    O --> Y
+    Y -- "marker-scored softmax<br/>+ calibrated confidence" --> P
     P --> T[comparison table in the browser]
-```
 
 - **Runtime-defined:** criterion and option descriptions arrive with the request; nothing is pre-trained per task.
 - **Decision-native (LLM paths):** one forward pass per readout, no answer sentence generated, no JSON repair.
@@ -44,15 +49,17 @@ The endpoint defaults to the `home-vllm` provider in `~/.pi/agent/models.json`
 
 - **Scenario list** (left) — loaded from the openjev examples in
   `decisions.jsonl`; click to load, `+ New scenario` to add your own.
-- **Editor** (middle) — id, state (plain text, JSON object, or array),
-  question, 2–16 options with letters A–P.
-- **Result** (right) — comparison table: rows are options, columns are the six
+- **Result** (right) — comparison table: rows are options, columns are the seven
   systems, per-column argmax highlighted, an agreement line against the LLM
-  choice, per-system timings, and a raw-JSON toggle.
+  choice, per-system timings (plus laya's calibrated confidence), and a
+  raw-JSON toggle. A header chip shows the local `laya` model's status
+  (`loading…` / `ready` / error) — it is pre-warmed in a background thread at
+  server startup, so the page is ready before the model finishes loading.
 
-**Score this** runs all six deciders on the current scenario in one request.
+**Score this** runs all seven deciders on the current scenario in one request.
 **Score all scenarios** runs them over every saved scenario and collapses each
 to one row showing every system's argmax + winning probability.
+
 
 Or script it:
 
@@ -64,7 +71,7 @@ curl -X POST http://127.0.0.1:8377/api/score \
 ```
 
 Validation errors return 422; endpoint failures return 502. A failing decider
-reports its own error in its column — the other five still report.
+reports its own error in its column — the other six still report.
 
 ## How the LLM readout works (the openjev imitation)
 
@@ -86,7 +93,7 @@ full-vocabulary logits locally; this reads the served model's top-20 logprobs
 outside the top-20 gets probability 0. Probabilities are conditional on the
 supplied options and uncalibrated as confidence — same caveat openjev states.
 
-## The six strategies
+## The seven strategies
 
 | # | system | type | what it measures |
 |---|--------|------|------------------|
@@ -96,6 +103,7 @@ supplied options and uncalibrated as confidence — same caveat openjev states.
 | 4 | `naive-bayes` | local | `MultinomialNB` fit on the option descriptions (3× per class), `predict_proba` on evidence+question |
 | 5 | `jaccard` | local | keyword Jaccard overlap of evidence+question vs each option description, `softmax(20·sim)` |
 | 6 | `knn` | local | `KNeighborsClassifier` (cosine, distance-weighted, k=min(3,n)) fit on option descriptions, `predict_proba` |
+| 7 | `laya` | local, fine-tuned | fully fine-tuned non-autoregressive decision model (ModernBERT-large + decision head), one choice question per row, marker-scored softmax over the option texts, temperature-calibrated; the only system that also reports a calibrated confidence |
 
 When there is no training data and no labels, "traditional ML" for
 runtime-defined decisions reduces to two shapes: **options-as-classes** (fit a
@@ -184,34 +192,69 @@ evidence+question. Like `tfidf-cosine` it lives in TF-IDF space, but it is a
 genuine classifier with a learned decision boundary rather than a softmax over
 raw similarity scores.
 
-## Measured divergence (the point of the tool)
+### 7. `laya` — a small fully fine-tuned decision model (local)
 
-Live results from `decisions.jsonl` (one request runs all six):
+[`laya`](https://huggingface.co/convaiinnovations/laya) is a 421M-parameter
+non-autoregressive decision model (ModernBERT-large backbone + a small
+decision head), fully fine-tuned with a strict proper scoring rule and
+temperature-calibrated — not a general-purpose LLM and not a zero-shot
+baseline. Each row becomes one `choice` question:
 
 ```
+state:        <state>          question: <question>
+options:      option id -> description   (each option at its own [MASK] marker)
+```
+
+One forward pass scores every option at its own `[MASK]` marker; the marker
+logits go through a per-option-count temperature bucket and softmax into
+probabilities over the option texts. It is the only decider that also
+returns a calibrated **confidence** (normalized-entropy), shown in the
+comparison table.
+
+Practical notes:
+- **Weights live in a git-ignored local folder.** The harness loads laya from
+  `models/laya/` (a self-contained ~808 MB copy, dereferenced real files,
+  ignored by git) — so once it exists, no HuggingFace fetch ever happens
+  again. If the folder is absent (a fresh checkout) it falls back to the
+  HF repo id `convaiinnovations/laya` and downloads into the cache. Populate
+  the local folder once with:
+  `uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('convaiinnovations/laya', local_dir='models/laya')"`
+- **One-time per-process MPS init.** Loading in a fresh process is slow on
+  the Apple-Silicon GPU (minutes) even with local weights, so the server
+  pre-warms it in a background thread at startup and the first request
+  simply waits for the already-loading agent (no double load); the header
+  chip shows `loading…` / `ready`. Steady-state prediction is fast
+  (~80–220 ms warm).
+- **Truncation.** laya caps each question at 512 tokens (head maxLen 128);
+  very long state or options get truncated.
+
+## Measured divergence (the point of the tool)
 support-1 (did the deployment succeed?)
-  llm              yes             99.6%    304ms
-  llm-per-option   insufficient   64.4%    726ms
-  tfidf-cosine     yes             97.9%      2ms
-  naive-bayes      yes             94.5%      2ms
-  jaccard          yes             48.0%      0ms
-  knn              yes             58.9%      3ms
+  llm              yes             99.6%    309ms
+  llm-per-option   insufficient   64.4%    373ms
+  tfidf-cosine     yes             97.9%      29ms
+  naive-bayes      yes             94.5%       6ms
+  jaccard          yes             48.0%       0ms
+  knn              yes             58.9%       5ms
+  laya             yes             72.0%    424ms  conf 28.8%
 
 route-1 (which queue handles a password reset?)
-  llm              account_access  99.9%   1606ms
-  llm-per-option   billing         82.0%    819ms
-  tfidf-cosine     billing         42.9%      5ms
+  llm              account_access  99.9%    253ms
+  llm-per-option   billing         82.0%    389ms
+  tfidf-cosine     billing         42.9%      2ms
   naive-bayes      billing         34.7%      2ms
   jaccard          billing         33.8%      0ms
   knn              billing         34.5%      4ms
+  laya             account_access  86.8%    389ms  conf 56.2%
 
 policy-1 (does this request need an approved change ticket?)
-  llm              not_required    99.0%    876ms
-  llm-per-option   insufficient    64.4%    425ms
+  llm              not_required    99.0%    276ms
+  llm-per-option   insufficient    64.4%    365ms
   tfidf-cosine     not_required    56.2%      2ms
   naive-bayes      not_required    53.6%      2ms
   jaccard          not_required    66.4%      0ms
   knn              not_required    37.9%      3ms
+  laya             not_required    65.0%    328ms  conf 21.3%
 ```
 
 `route-1` is the canonical case: the LLM reasons about intent
@@ -224,9 +267,11 @@ expose: the local systems match words, the LLM reads intent.
 
 - **Top-20 logprob truncation (LLM paths):** an option letter outside the
   top-20 scores 0; openjev's local readout has no such truncation.
-- **Uncalibrated everywhere:** every probability here is a conditional option
-  score, not a calibrated confidence. Calibrate on a workload with labels
-  before using any of these to make real decisions.
+- **Uncalibrated except laya:** every probability here is a conditional option
+  score, not a calibrated confidence — *except* `laya`, which is
+  temperature-calibrated and reports a normalized-entropy confidence.
+  Calibrate the others on a workload with labels before using any of these to
+  make real decisions.
 - **Local systems are zero-shot by construction:** no external data is used or
   available; the option descriptions are the entire signal. They are
   baselines for comparison, not production classifiers.
@@ -236,9 +281,10 @@ expose: the local systems match words, the LLM reads intent.
 | file | role |
 |------|------|
 | `openjev_lite.py` | the openjev direct-mode imitation over the endpoint (CLI + library) |
-| `ml_systems.py` | the six-decider protocol: `score_all(row, endpoint)` |
-| `server.py` | FastAPI: `/` (page), `/api/score`, `/api/examples`, `/api/info` |
+| `ml_systems.py` | the seven-decider protocol: `score_all(row, endpoint)`, incl. `laya` |
+| `server.py` | FastAPI: `/` (page), `/api/score`, `/api/examples`, `/api/info`, `/api/laya` |
 | `web/index.html` | the whole UI — vanilla HTML/CSS/JS, no build step |
 | `decisions.jsonl` | the three openjev example scenarios |
 | `hit-qwen-vllm.sh` | the original endpoint probe (curl) |
+| `models/laya/` | the local laya weights (git-ignored); loaded in place, never re-fetched |
 | `hello.py` | uv project scaffold, unused by the tool |

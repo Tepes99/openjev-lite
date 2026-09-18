@@ -7,4 +7,6 @@ wheels/
 *.egg-info
 
 # Virtual environments
+# local model weights (self-contained copy, not re-fetched from HuggingFace)
+models/
 .venv

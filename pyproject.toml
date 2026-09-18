@@ -4,4 +4,10 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["certifi", "fastapi", "scikit-learn", "uvicorn"]
+dependencies = [
+    "certifi",
+    "fastapi",
+    "laya>=0.1.6",
+    "scikit-learn",
+    "uvicorn",
+]

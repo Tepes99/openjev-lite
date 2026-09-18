@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>openjev-lite tester</title>
+<title>decision systems tester</title>
 <style>
   :root {
     --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
@@ -67,7 +67,9 @@
   pre.raw { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; color: var(--dim); margin-top: 12px; }
   .hint { color: var(--dim); font-size: 12px; }
   .badge { font-size: 11px; color: var(--dim); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; margin-left: 6px; }
-  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--dim); border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  .laya-chip { margin-left: auto; font-size: 11px; color: var(--dim); border: 1px solid var(--border); border-radius: 10px; padding: 2px 10px; white-space: nowrap; }
+  .laya-chip.ready { color: var(--ok); border-color: var(--ok); }
+  .laya-chip.error { color: var(--bad); border-color: var(--bad); }
   @keyframes spin { to { transform: rotate(360deg); } }
   table.cmp { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   table.cmp th { color: var(--dim); font-size: 11px; text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: .05em; vertical-align: top; }
@@ -75,7 +77,7 @@
   table.cmp td { padding: 6px 8px; border-bottom: 1px solid #21262d; }
   table.cmp td.win { color: var(--text); font-weight: 700; }
   table.cmp .hint, table.cmp tr.hint td { color: var(--dim); font-size: 12px; font-weight: 400; }
-  .batch-row { display: grid; grid-template-columns: 130px repeat(6, 1fr); gap: 6px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .batch-row { display: grid; grid-template-columns: 120px repeat(7, 1fr); gap: 6px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
   .batch-row .b { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .batch-row .cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
   .batch-row .cell.win { color: var(--ok); font-weight: 700; }
@@ -83,8 +85,9 @@
 </head>
 <body>
 <header>
-  <h1>openjev-lite tester</h1>
-  <span class="sub">direct-mode option readout · top-20 logprobs · <span id="model">…</span></span>
+  <h1>decision systems tester</h1>
+  <span class="sub"><span id="model">…</span></span>
+  <span class="laya-chip" id="layaChip">laya: loading…</span>
 </header>
 <main>
   <div class="col">
@@ -190,7 +193,7 @@ function renderScenarioList() {
   });
 }
 
-const SYSTEM_NAMES = ["llm", "llm-per-option", "tfidf-cosine", "naive-bayes", "jaccard", "knn"];
+const SYSTEM_NAMES = ["llm", "llm-per-option", "tfidf-cosine", "naive-bayes", "jaccard", "knn", "laya"];
 
 function argmax(probabilities) { return probabilities.indexOf(Math.max(...probabilities)); }
 
@@ -231,7 +234,8 @@ function renderResult(results, scenarioId) {
   const meta = SYSTEM_NAMES.map(name => {
     const r = results[name];
     if (!r || r.error) return "";
-    return `<span>${name} <b>${(r.total_seconds * 1000).toFixed(0)} ms</b></span>`;
+    const conf = r.confidence != null ? ` · conf <b>${(r.confidence * 100).toFixed(1)}%</b>` : "";
+    return `<span>${name} <b>${(r.total_seconds * 1000).toFixed(0)} ms</b>${conf}</span>`;
   }).join("");
   el.innerHTML = `
     <table class="cmp"><tr><th>option</th>${headers}</tr>${rows}</table>
@@ -327,6 +331,20 @@ $("scoreAll").addEventListener("click", scoreAll);
   renderScenarioList();
   renderResult(null);
   fetch("/api/info").then(r => r.json()).then(d => { $("model").textContent = d.model; }).catch(() => {});
+  // laya status chip: poll until ready/error (the model is a one-time multi-minute load)
+  (function pollLaya() {
+    fetch("/api/laya").then(r => r.json()).then(d => {
+      const chip = $("layaChip");
+      if (d.status === "ready") {
+        chip.textContent = "laya: ready"; chip.className = "laya-chip ready";
+      } else if (d.status === "error") {
+        chip.textContent = "laya: " + (d.error || "error"); chip.className = "laya-chip error";
+      } else {
+        chip.textContent = "laya: loading…";
+        setTimeout(pollLaya, 5000);
+      }
+    }).catch(() => setTimeout(pollLaya, 5000));
+  })();
 })();
 </script>
 </body>
