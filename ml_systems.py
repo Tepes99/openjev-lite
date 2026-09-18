@@ -19,11 +19,13 @@ import json
 import math
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import openjev_lite
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.naive_bayes import MultinomialNB
+from sklearn.neighbors import KNeighborsClassifier
 
 
 def state_to_text(state) -> str:
@@ -61,6 +63,42 @@ def score_llm(row: dict, endpoint: dict) -> dict:
     result = openjev_lite.score_row(row, endpoint)
     result["method"] = "llm-direct-logprobs"
     return result
+
+
+PER_OPTION_SYSTEM = (
+    "Decide whether the supplied option is the correct answer for the criterion. "
+    "Respond with exactly 'yes' or 'no'."
+)
+
+
+def _first_token_logprob(endpoint: dict, messages: list[dict]) -> float:
+    response = openjev_lite.request_completion(endpoint, messages)
+    first = response["choices"][0]["logprobs"]["content"][0]
+    logprobs = {entry["token"].lower(): entry["logprob"] for entry in first.get("top_logprobs") or []}
+    return logprobs.get("yes", float("-inf"))
+
+
+def score_llm_per_option(row: dict, endpoint: dict) -> dict:
+    started = time.perf_counter()
+    def one(option: dict) -> float:
+        messages = [
+            {"role": "system", "content": PER_OPTION_SYSTEM},
+            {"role": "user", "content": (
+                f"evidence: {state_to_text(row['state'])}\n"
+                f"criterion: {row['question']}\n"
+                f"option: {option['description']}"
+            )},
+        ]
+        return math.exp(min(_first_token_logprob(endpoint, messages), 0.0))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        raw = list(pool.map(one, row["options"]))
+    total = sum(raw)
+    probs = [p / total for p in raw] if total > 0 else [1.0 / len(raw)] * len(raw)
+    return _result(
+        row, [option["id"] for option in row["options"]], probs, started,
+        "llm-per-option-v1",
+        "pointwise 'is option X correct?' yes/no first-token logprob, normalized over options",
+    )
 
 
 def score_tfidf_cosine(row: dict, endpoint: dict | None = None) -> dict:
@@ -114,11 +152,39 @@ def score_jaccard(row: dict, endpoint: dict | None = None) -> dict:
     )
 
 
+def score_knn(row: dict, endpoint: dict | None = None) -> dict:
+    started = time.perf_counter()
+    query = state_to_text(row["state"]) + " " + row["question"]
+    docs = [option["description"] for option in row["options"]]
+    non_empty = [(i, doc) for i, doc in enumerate(docs) if doc]
+    if len(non_empty) < 2:
+        probs = [1.0 / len(docs)] * len(docs)
+    else:
+        vectorizer = TfidfVectorizer().fit([doc for _, doc in non_empty])
+        X = vectorizer.transform([doc for _, doc in non_empty])
+        y = [i for i, _ in non_empty]
+        k = min(3, len(non_empty))
+        knn = KNeighborsClassifier(n_neighbors=k, metric="cosine", weights="distance")
+        knn.fit(X, y)
+        raw = knn.predict_proba(vectorizer.transform([query]))[0]
+        probs = [0.0] * len(docs)
+        for cls, p in zip(knn.classes_, raw):
+            probs[cls] = p
+        total = sum(probs)
+        probs = [p / total for p in probs]
+    return _result(
+        row, [option["id"] for option in row["options"]], probs, started,
+        "knn-v1",
+        "KNeighborsClassifier (cosine, distance-weighted, k=min(3,n)) on option descriptions; predict_proba on evidence+question",
+    )
+
 DECIDERS = [
     ("llm", score_llm),
+    ("llm-per-option", score_llm_per_option),
     ("tfidf-cosine", score_tfidf_cosine),
     ("naive-bayes", score_naive_bayes),
     ("jaccard", score_jaccard),
+    ("knn", score_knn),
 ]
 
 
