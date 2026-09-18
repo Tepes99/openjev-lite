@@ -18,11 +18,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
 import openjev_lite
+import ml_systems
 
 ROOT = Path(__file__).parent
 app = FastAPI(title="openjev-lite tester")
-
-
 @app.get("/api/info")
 def info() -> dict:
     ep = openjev_lite.load_endpoint()
@@ -37,20 +36,16 @@ def examples() -> list[dict]:
         if line.strip()
     ]
 
-
 @app.post("/api/score")
 async def score(request: Request) -> dict:
     payload = await request.json()
-    rows = payload if isinstance(payload, list) else [payload]
+    row = payload[0] if isinstance(payload, list) else payload
     try:
-        endpoint = openjev_lite.load_endpoint()
-        results = [openjev_lite.score_row(row, endpoint) for row in rows]
+        openjev_lite.validate_row(row)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    except Exception as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    return {"results": results}
-
+    endpoint = openjev_lite.load_endpoint()
+    return {"results": ml_systems.score_all(row, endpoint)}
 
 @app.get("/")
 def index() -> FileResponse:
