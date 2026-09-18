@@ -2,85 +2,132 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>decision systems tester</title>
 <style>
   :root {
-    --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
-    --dim: #8b949e; --accent: #2f81f7; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+    --bg: #f5f5f7; --panel: #ffffff; --border: #e3e3e8;
+    --text: #1d1d1f; --text2: #48484d; --dim: #86868b;
+    --accent: #0071e3; --bad: #ff3b30;
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.5 -apple-system, "SF Pro Text", Menlo, monospace;
+    font: 15px/1.5 system-ui, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
   header {
-    display: flex; align-items: baseline; gap: 12px;
-    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 20px; padding-top: max(12px, env(safe-area-inset-top));
+    background: rgba(255, 255, 255, .8);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--border);
   }
-  header h1 { font-size: 16px; margin: 0; }
-  header .sub { color: var(--dim); font-size: 12px; }
-  main { display: grid; grid-template-columns: 240px 1fr 1fr; gap: 0; height: calc(100vh - 53px); }
-  .col { overflow-y: auto; padding: 16px; }
-  .col + .col { border-left: 1px solid var(--border); }
-  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 0 0 10px; }
+  header h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+  header .sub { color: var(--dim); font-size: 13px; }
+  .laya-chip {
+    margin-left: auto; font-size: 12px; color: var(--dim);
+    border: 1px solid var(--border); border-radius: 980px; padding: 4px 12px;
+    white-space: nowrap; background: var(--panel);
+    transition: color .2s ease, border-color .2s ease, background .2s ease;
+  }
+  .laya-chip.ready { color: #248a3d; border-color: rgba(52,199,89,.45); background: rgba(52,199,89,.1); }
+  .laya-chip.error { color: var(--bad); border-color: rgba(255,59,48,.45); background: rgba(255,59,48,.08); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); margin: 0 0 12px; font-weight: 600; }
+  label { display: block; color: var(--dim); font-size: 13px; margin: 16px 0 6px; font-weight: 500; }
+  input, textarea, select {
+    width: 100%; background: #f2f2f5; border: 1px solid transparent; color: var(--text);
+    border-radius: 10px; padding: 9px 12px; font: inherit; font-size: 16px;
+    transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+  }
+  input::placeholder, textarea::placeholder { color: #aeaeb2; }
+  input:focus, textarea:focus { outline: none; background: #fff; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,113,227,.12); }
+  textarea { resize: vertical; min-height: 130px; }
+  .opt-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; background: #fafafa; }
+  .opt-card .card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .opt-card .card-head .letter { color: var(--accent); font-weight: 700; font-size: 15px; }
+  .opt-card .card-head .card-title { font-weight: 600; font-size: 13px; color: var(--text2); }
+  .opt-card .del { margin-left: auto; }
+  .opt-card .opt-fields { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: start; }
+  .opt-card .opt-fields label { display: block; color: var(--dim); font-size: 12px; font-weight: 600; margin: 0 0 5px; text-transform: uppercase; letter-spacing: .05em; }
+  button.tiny { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 14px; padding: 4px 6px; border-radius: 6px; }
+  button.tiny:hover { color: var(--bad); background: rgba(255,59,48,.08); }
   .scenario {
     display: block; width: 100%; text-align: left; cursor: pointer;
-    background: none; border: 1px solid var(--border); color: var(--text);
-    border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font: inherit;
+    background: #f2f2f5; border: 1px solid transparent; color: var(--text);
+    border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font: inherit; font-size: 14px;
+    transition: background .15s ease, border-color .15s ease;
   }
-  .scenario:hover { border-color: var(--accent); }
-  .scenario.active { border-color: var(--accent); background: rgba(47,129,247,.12); }
+  .scenario:hover { background: #e9e9ee; }
+  .scenario.active { background: rgba(0,113,227,.08); border-color: rgba(0,113,227,.4); }
   .scenario .id { font-weight: 600; }
   .scenario .q { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   button.action {
-    background: var(--accent); border: none; color: #fff; border-radius: 6px;
-    padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer;
+    background: var(--accent); border: none; color: #fff;
+    border-radius: 980px; padding: 9px 18px; font: inherit; font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: background .15s ease, transform .05s ease, border-color .15s ease;
   }
-  button.action.secondary { background: none; border: 1px solid var(--border); color: var(--text); font-weight: 400; }
-  button.action.secondary:hover { border-color: var(--accent); }
-  button.tiny { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 13px; padding: 2px 6px; }
-  button.tiny:hover { color: var(--bad); }
-  label { display: block; color: var(--dim); font-size: 12px; margin: 12px 0 4px; }
-  input, textarea, select {
-    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    border-radius: 6px; padding: 7px 9px; font: inherit;
+  button.action:hover { background: #0077ed; }
+  button.action:active { transform: scale(.97); }
+  button.action.secondary { background: var(--panel); border: 1px solid var(--border); color: var(--text); font-weight: 400; }
+  button.action.secondary:hover { border-color: #c7c7cc; background: #fafafc; }
+  .toolbar { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+  .hint { color: var(--dim); font-size: 13px; }
+  .err { color: var(--bad); margin-top: 10px; white-space: pre-wrap; font-size: 13px; }
+  pre.raw {
+    background: #f2f2f5; border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; overflow-x: auto; margin-top: 12px;
+    font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--text2);
   }
-  textarea { resize: vertical; min-height: 84px; }
-  input:focus, textarea:focus { outline: none; border-color: var(--accent); }
-  .opt-row { display: grid; grid-template-columns: 38px 110px 1fr 30px; gap: 8px; margin-bottom: 8px; align-items: center; }
-  .opt-row .letter { color: var(--accent); font-weight: 700; text-align: center; }
-  .opt-row .del { text-align: right; }
-  .toolbar { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
-  .bars { margin-top: 14px; }
-  .bar-row { display: grid; grid-template-columns: 150px 1fr 130px; gap: 10px; align-items: center; margin-bottom: 8px; }
-  .bar-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .bar-track { background: #21262d; border-radius: 4px; height: 22px; position: relative; }
-  .bar-fill { background: var(--dim); height: 100%; border-radius: 4px; min-width: 2px; }
-  .bar-row.win .bar-fill { background: var(--accent); }
-  .bar-row .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); font-size: 12px; }
-  .bar-row.win .val { color: var(--text); font-weight: 700; }
-  .meta { display: flex; gap: 18px; margin-top: 12px; color: var(--dim); font-size: 12px; flex-wrap: wrap; }
+  .meta { display: flex; gap: 16px; margin-top: 14px; color: var(--dim); font-size: 13px; flex-wrap: wrap; }
   .meta b { color: var(--text); font-weight: 600; }
-  .argmax-badge { display: inline-block; background: rgba(63,185,80,.15); color: var(--ok); border: 1px solid var(--ok); border-radius: 10px; padding: 1px 10px; font-size: 12px; font-weight: 700; margin-top: 10px; }
-  .err { color: var(--bad); margin-top: 10px; white-space: pre-wrap; }
-  pre.raw { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; color: var(--dim); margin-top: 12px; }
-  .hint { color: var(--dim); font-size: 12px; }
-  .badge { font-size: 11px; color: var(--dim); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; margin-left: 6px; }
-  .laya-chip { margin-left: auto; font-size: 11px; color: var(--dim); border: 1px solid var(--border); border-radius: 10px; padding: 2px 10px; white-space: nowrap; }
-  .laya-chip.ready { color: var(--ok); border-color: var(--ok); }
-  .laya-chip.error { color: var(--bad); border-color: var(--bad); }
+  .spinner {
+    display: inline-block; width: 13px; height: 13px; vertical-align: -2px;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; margin-right: 8px; animation: spin .8s linear infinite;
+  }
   @keyframes spin { to { transform: rotate(360deg); } }
-  table.cmp { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  table.cmp th { color: var(--dim); font-size: 11px; text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: .05em; vertical-align: top; }
-  table.cmp th .col-win { color: var(--ok); font-size: 13px; text-transform: none; font-weight: 700; margin-top: 2px; }
-  table.cmp td { padding: 6px 8px; border-bottom: 1px solid #21262d; }
-  table.cmp td.win { color: var(--text); font-weight: 700; }
-  table.cmp .hint, table.cmp tr.hint td { color: var(--dim); font-size: 12px; font-weight: 400; }
-  .batch-row { display: grid; grid-template-columns: 120px repeat(5, 1fr); gap: 6px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
-  .batch-row .b { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .table-scroll { overflow-x: auto; margin-top: 4px; }
+  table.cmp { width: 100%; min-width: 600px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  table.cmp th { color: var(--dim); font-size: 12px; font-weight: 500; text-align: left; padding: 8px 10px; vertical-align: top; }
+  table.cmp th .col-win { color: var(--accent); font-size: 13px; font-weight: 600; margin-top: 3px; }
+  table.cmp td { padding: 10px; border-top: 1px solid var(--border); color: var(--text2); font-size: 14px; }
+  table.cmp td:first-child { color: var(--text); font-weight: 500; }
+  table.cmp td.win { color: var(--accent); font-weight: 600; }
+  table.cmp .hint { color: var(--dim); font-weight: 400; }
+  .batch-scroll { overflow-x: auto; }
+  .batch-row {
+    display: grid; grid-template-columns: 140px repeat(5, minmax(86px, 1fr)); gap: 8px;
+    align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border);
+    font-size: 13px; min-width: 660px;
+  }
+  .batch-row .b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .batch-row .cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
-  .batch-row .cell.win { color: var(--ok); font-weight: 700; }
+  .batch-row .cell.win { color: var(--accent); font-weight: 600; }
+  main { display: block; padding: 16px; }
+  .col { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
+  .col:last-child { margin-bottom: 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .intro { padding: 12px 20px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text2); line-height: 1.55; }
+  .intro .intro-links { color: var(--dim); font-size: 12px; margin-top: 4px; }
+  .intro .intro-links a { margin-right: 12px; }
+  @media (min-width: 1001px) {
+    body { display: flex; flex-direction: column; overflow: hidden; }
+    main {
+      flex: 1; min-height: 0; display: grid; grid-template-columns: 300px 1fr 1.15fr;
+      padding: 0; background: var(--panel);
+    }
+    .col { overflow-y: auto; background: none; border: none; border-radius: 0; margin: 0; padding: 22px; }
+    .col + .col { border-left: 1px solid var(--border); }
+  }
+  @media (max-width: 1000px) {
+    #scenarioList { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
+    .scenario { flex: 0 0 auto; width: 230px; margin-bottom: 0; }
+  }
 </style>
 </head>
 <body>
@@ -89,6 +136,17 @@
   <span class="sub"><span id="model">…</span></span>
   <span class="laya-chip" id="layaChip">laya: loading…</span>
 </header>
+<div class="intro">
+  <b>What this is</b> — a small imitation of <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noopener">Jev</a>, TypeSafe's "System One" model for runtime-defined semantic decisions: give it state, a question, and typed options, and it reads the option probabilities straight from one forward pass — no answer sentence, no JSON repair, no decoding loop. Here the base method is <b>laya</b> (an open model in the same spirit), compared against four classic baselines (tfidf-cosine, naive-bayes, jaccard, knn) so you can see what the decision model actually buys you.
+  <div class="intro-links">
+    <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev" target="_blank" rel="noopener">original: Jev launch post</a>
+    <a href="https://github.com/TheoLeeCJ/openjev" target="_blank" rel="noopener">openjev — the idea reproduced with open models</a>
+    <a href="https://huggingface.co/convaiinnovations/laya" target="_blank" rel="noopener">laya — the model on HuggingFace</a>
+    <a href="https://news.ycombinator.com/item?id=49752041" target="_blank" rel="noopener">HN discussion</a>
+    <a href="https://github.com/Tepes99/openjev-lite" target="_blank" rel="noopener">this project — GitHub</a>
+    <a href="https://teemusaha.com" target="_blank" rel="noopener">author homepage</a>
+  </div>
+</div>
 <main>
   <div class="col">
     <h2>Scenarios</h2>
@@ -103,7 +161,7 @@
     <textarea id="editState" placeholder="The deployment completed at 14:02 UTC. …"></textarea>
     <label>question (criterion)</label>
     <input id="editQuestion" placeholder="Which option is correct?">
-    <label>options (2–16)</label>
+    <label>options (2–16) — each option has a label and an explanation</label>
     <div id="editOptions"></div>
     <button class="action secondary" id="addOption">+ Add option</button>
     <div class="toolbar">
@@ -138,8 +196,21 @@ function freshRow() {
 function loadRow(row) {
   $("editId").value = row.id;
   $("editState").value = typeof row.state === "string" ? row.state : JSON.stringify(row.state, null, 2);
+  $("editState").scrollTop = $("editState").scrollHeight;
   $("editQuestion").value = row.question;
+  focusEnd($("editId"));
+  focusEnd($("editState"));
+  focusEnd($("editQuestion"));
   renderOptions(row.options);
+}
+function focusEnd(el) {
+  el.addEventListener("focus", (e) => {
+    if (e.detail !== 0) return; // mouse click: caret goes to the clicked position
+    try {
+      el.setSelectionRange(el.value.length, el.value.length);
+      if (el.tagName === "TEXTAREA") el.scrollTop = el.scrollHeight;
+    } catch { /* unsupported input type */ }
+  }, { once: true });
 }
 
 function renderOptions(options) {
@@ -148,12 +219,23 @@ function renderOptions(options) {
   const letters = "ABCDEFGHIJKLMNOP";
   options.forEach((opt, i) => {
     const row = document.createElement("div");
-    row.className = "opt-row";
+    row.className = "opt-card";
     row.innerHTML = `
-      <span class="letter">${letters[i]}</span>
-      <input class="opt-id" placeholder="id" value="">
-      <input class="opt-desc" placeholder="description" value="">
-      <span class="del"><button class="tiny" title="remove">✕</button></span>`;
+      <div class="card-head">
+        <span class="letter">${letters[i]}</span>
+        <span class="card-title">option ${i + 1}</span>
+        <span class="del"><button class="tiny" title="remove option">✕</button></span>
+      </div>
+      <div class="opt-fields">
+        <div class="field">
+          <label>label (id)</label>
+          <input class="opt-id" placeholder="account_access" value="">
+        </div>
+        <div class="field">
+          <label>explanation</label>
+          <input class="opt-desc" placeholder="What this option means, in the model's own words" value="">
+        </div>
+      </div>`;
     row.querySelector(".opt-id").value = opt.id;
     row.querySelector(".opt-desc").value = opt.description;
     row.querySelector(".opt-id").addEventListener("input", (e) => { options[i].id = e.target.value; });
@@ -173,7 +255,7 @@ function readEditor() {
     if (state.trim().startsWith("{") || state.trim().startsWith("[")) state = JSON.parse(state);
   } catch { /* plain text */ }
   const options = [];
-  $("editOptions").querySelectorAll(".opt-row").forEach((row) => {
+  $("editOptions").querySelectorAll(".opt-card").forEach((row) => {
     options.push({ id: row.querySelector(".opt-id").value, description: row.querySelector(".opt-desc").value });
   });
   return { id: $("editId").value, state, question: $("editQuestion").value, options };
@@ -193,7 +275,7 @@ function renderScenarioList() {
   });
 }
 
-const SYSTEM_NAMES = ["tfidf-cosine", "naive-bayes", "jaccard", "knn", "laya"];
+const SYSTEM_NAMES = ["laya", "tfidf-cosine", "naive-bayes", "jaccard", "knn"];
 
 function argmax(probabilities) { return probabilities.indexOf(Math.max(...probabilities)); }
 
@@ -213,7 +295,7 @@ function renderResult(results, scenarioId) {
       const p = r.probabilities[i] ?? 0;
       return `<td class="${argmax(r.probabilities) === i ? "win" : ""}">${(p * 100).toFixed(1)}%</td>`;
     }).join("");
-    return `<tr><td class="b">${opt}</td>${cells}</tr>`;
+    return `<tr><td>${opt}</td>${cells}</tr>`;
   }).join("");
   // agreement line: how many systems agree with the laya (base) choice
   const base = results["laya"];
@@ -238,7 +320,7 @@ function renderResult(results, scenarioId) {
     return `<span>${name} <b>${(r.total_seconds * 1000).toFixed(0)} ms</b>${conf}</span>`;
   }).join("");
   el.innerHTML = `
-    <table class="cmp"><tr><th>option</th>${headers}</tr>${rows}</table>
+    <div class="table-scroll"><table class="cmp"><tr><th>option</th>${headers}</tr>${rows}</table></div>
     ${agreement}
     <div class="meta">${meta}</div>
     ${errors}
@@ -272,13 +354,14 @@ async function scoreOne() {
 
 async function scoreAll() {
   const el = $("result");
-  el.innerHTML = scenarios.map(row =>
+  el.innerHTML = `<div class="batch-scroll">` + scenarios.map(row =>
     `<div class="batch-row"><span class="spinner"></span><span class="b">${row.id}</span>` +
     SYSTEM_NAMES.map(() => `<span class="cell hint">…</span>`).join("") + `</div>`
-  ).join("");
+  ).join("") + `</div>`;
+  const lines = el.querySelectorAll(".batch-row");
   for (let i = 0; i < scenarios.length; i++) {
     const row = scenarios[i];
-    const line = el.children[i];
+    const line = lines[i];
     try {
       const r = await score(row);
       const cells = SYSTEM_NAMES.map(name => {
@@ -309,6 +392,13 @@ $("addOption").addEventListener("click", () => {
   scenarios[current] = row;
   renderOptions(row.options);
   renderScenarioList();
+  const last = $("editOptions").querySelectorAll(".opt-card")[row.options.length - 1];
+  if (last) {
+    last.scrollIntoView({ block: "center" });
+    const idInput = last.querySelector(".opt-id");
+    idInput.focus();
+    idInput.setSelectionRange(idInput.value.length, idInput.value.length);
+  }
 });
 $("addScenario").addEventListener("click", () => {
   scenarios.push(freshRow());
