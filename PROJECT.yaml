@@ -1,0 +1,22 @@
+schema_version: 1
+
+project:
+  name: openjev-lite
+  title: OpenJEV Lite
+  summary: Local comparison harness for decision models and traditional machine-learning baselines
+
+classification:
+  visibility: public
+  kind: research
+  stage: alpha
+  status: active
+  version: 0.1.0
+
+workspace:
+  groups: []
+  preferred_machines: []
+
+documentation:
+  entrypoint: README.md
+  architecture: README.md
+
