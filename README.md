@@ -174,7 +174,8 @@ Practical notes:
   `models/laya/` (a self-contained ~808 MB copy, dereferenced real files,
   ignored by git) — so once it exists, no HuggingFace fetch ever happens
   again. If the folder is absent (a fresh checkout) it falls back to the
-  HF repo id `convaiinnovations/laya` and downloads into the cache. In the
+  HF repo id `convaiinnovations/laya` and downloads it into that ignored local
+  folder using `models/.cache` as its download cache. In the
   deployed container the model is fetched once into the persistent `/data`
   volume on first boot and reused across restarts. Populate the local folder
   once with:

@@ -137,6 +137,7 @@ def score_knn(row: dict) -> dict:
 
 
 # --- laya: a small fully fine-tuned non-autoregressive decision model (base) ---
+import os
 import threading
 from pathlib import Path
 
@@ -148,6 +149,15 @@ _laya_lock = threading.Lock()
 # prefer the git-ignored models/laya copy, else fall back to the HF repo id.
 _LAYA_DATA = Path("/data/laya")
 _LAYA_LOCAL = Path(__file__).parent / "models" / "laya"
+_LAYA_CACHE = Path(__file__).parent / "models" / ".cache"
+
+
+def _configure_local_model_cache() -> None:
+    """Keep host-side downloads inside this project's ignored models tree."""
+    _LAYA_CACHE.mkdir(parents=True, exist_ok=True)
+    os.environ["HF_HOME"] = str(_LAYA_CACHE)
+    os.environ["HUGGINGFACE_HUB_CACHE"] = str(_LAYA_CACHE / "hub")
+    os.environ["HF_XET_CACHE"] = str(_LAYA_CACHE / "xet")
 
 
 def _laya_source() -> str:
@@ -160,7 +170,19 @@ def _laya_source() -> str:
         return str(_LAYA_DATA)
     if _LAYA_LOCAL.exists():
         return str(_LAYA_LOCAL)
-    return "convaiinnovations/laya"
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(
+        "convaiinnovations/laya",
+        local_dir=str(_LAYA_LOCAL),
+        allow_patterns=(
+            "model.safetensors",
+            "rl_agent_config.json",
+            "encoder/**",
+            "tokenizer/**",
+        ),
+    )
+    return str(_LAYA_LOCAL)
 
 
 def _get_laya():
@@ -178,6 +200,7 @@ def _get_laya():
         with _laya_lock:
             if _laya_agent is None and _laya_load_error is None:
                 try:
+                    _configure_local_model_cache()
                     import laya
 
                     _laya_agent = laya.load(_laya_source())
